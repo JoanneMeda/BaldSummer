@@ -161,7 +161,7 @@
             const statusDiv = document.getElementById('status');
 
             if (!forceRefresh && localStorage.getItem('auctionData')) {
-                allAuctions = JSON.parse(localStorage.getItem('auctionData'));
+                allAuctions = JSON.parse(localStorage.getItem('auctionData')) || [];
                 statusDiv.textContent = "Using cached data. Click 'Refetch Auctions' to update.";
                 return;
             }
@@ -169,14 +169,44 @@
             statusDiv.textContent = "Fetching auction data...";
             resultsDiv.innerHTML = "";
             try {
-                const response = await axios.get(apiEndpoint);
-                allAuctions = response.data;
+                const response = await axios.get(apiEndpoint, {
+                    headers: { 'Accept': 'application/json' }
+                });
+                allAuctions = Array.isArray(response.data) ? response.data : (response.data.auctions || []);
+                if (!allAuctions.length) {
+                    console.warn("No auctions received from backend, attempting initial fetch from Hypixel as fallback...");
+                    await fallbackFetchFromHypixel();
+                }
 
                 localStorage.setItem('auctionData', JSON.stringify(allAuctions));
                 statusDiv.textContent = `Fetched ${allAuctions.length} auctions successfully.`;
             } catch (error) {
-                console.error("Fetch error:", error);
-                statusDiv.textContent = "Failed to fetch auctions. Try again later.";
+                console.error("Fetch error from backend:", error);
+                statusDiv.textContent = `Failed to fetch auctions from backend: ${error.message}. Trying Hypixel fallback...`;
+                await fallbackFetchFromHypixel();
+            }
+        }
+
+        async function fallbackFetchFromHypixel() {
+            try {
+                const initialResponse = await fetch('https://api.hypixel.net/skyblock/auctions');
+                const initialData = await initialResponse.json();
+                if (!initialData.success) throw new Error("Hypixel API failed: " + (initialData.cause || "Unknown error"));
+
+                const totalPages = initialData.totalPages || 1;
+                const pagePromises = Array.from({ length: totalPages }, (_, i) =>
+                    fetch(`https://api.hypixel.net/skyblock/auctions?page=${i}`).then(res => res.json())
+                );
+
+                const allPagesData = await Promise.all(pagePromises);
+                allAuctions = allPagesData.flatMap(data => data.auctions || []);
+
+                localStorage.setItem('auctionData', JSON.stringify(allAuctions));
+                document.getElementById('status').textContent = `Fetched ${allAuctions.length} auctions from Hypixel as fallback.`;
+            } catch (error) {
+                console.error("Hypixel fallback fetch error:", error);
+                document.getElementById('status').textContent = `Failed to fetch auctions from Hypixel: ${error.message}. Try again later.`;
+                allAuctions = [];
             }
         }
 
