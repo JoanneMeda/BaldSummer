@@ -146,8 +146,9 @@
         <div class="status" id="status"></div>
     </main>
 
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <script>
-        const apiEndpoint = "https://api.hypixel.net/skyblock/auctions";
+        const apiEndpoint = "https://sb-auction-api.herokuapp.com/auctions/search"; // Updated to Heroku backend
         let allAuctions = [];
         let skip = 0; // Track pagination
 
@@ -164,17 +165,8 @@
             statusDiv.textContent = "Fetching auction data...";
             resultsDiv.innerHTML = "";
             try {
-                const initialResponse = await fetch(apiEndpoint);
-                const initialData = await initialResponse.json();
-                if (!initialData.success) throw new Error("API request failed");
-
-                const totalPages = initialData.totalPages;
-                const pagePromises = Array.from({ length: totalPages }, (_, i) =>
-                    fetch(`${apiEndpoint}?page=${i}`).then(res => res.json())
-                );
-
-                const allPagesData = await Promise.all(pagePromises);
-                allAuctions = allPagesData.flatMap(data => data.auctions || []);
+                const response = await axios.get(apiEndpoint);
+                allAuctions = response.data;
 
                 localStorage.setItem('auctionData', JSON.stringify(allAuctions));
                 statusDiv.textContent = `Fetched ${allAuctions.length} auctions successfully.`;
@@ -185,8 +177,6 @@
         }
 
         async function searchItem(page = 0) {
-            if (!allAuctions.length) await fetchAuctionData();
-
             const query = document.getElementById('searchInput').value.trim().toLowerCase();
             const rarity = document.getElementById('rarityFilter').value;
             const binFilter = document.getElementById('binFilter').value;
@@ -202,26 +192,30 @@
 
             console.log('Searching with params:', { query, rarity, binFilter, attribute1, attribute2, attributeRange, priceSort, page });
 
-            const [attributeName, rangeStart, rangeEnd] = parseAttributeRange(attributeRange);
+            const params = new URLSearchParams();
+            if (query) params.append('item', query);
+            if (rarity) params.append('rarity', rarity);
+            if (binFilter) params.append('bin', binFilter);
+            if (attribute1) params.append('attribute1', attribute1);
+            if (attribute2) params.append('attribute2', attribute2);
+            if (attributeRange) params.append('attributeRange', attributeRange);
+            if (priceSort) params.append('priceSort', priceSort);
+            params.append('skip', page * 100);
 
-            const filteredAuctions = allAuctions.filter(auction => {
-                return (
-                    (!query || auction.item_name.toLowerCase().includes(query)) &&
-                    (!rarity || auction.tier === rarity) &&
-                    (binFilter === "" || auction.bin === (binFilter === "true")) &&
-                    (!attribute1 || (auction.item_lore?.toLowerCase().includes(attribute1))) &&
-                    (!attribute2 || (auction.item_lore?.toLowerCase().includes(attribute2))) &&
-                    (!attributeName || checkAttributeRange(auction.item_lore, attributeName, rangeStart, rangeEnd))
-                );
-            }).sort((a, b) => priceSort === "highest" ? b.starting_bid - a.starting_bid : a.starting_bid - b.starting_bid)
-              .slice(page * 100, (page + 1) * 100);
+            try {
+                const response = await axios.get(`${apiEndpoint}?${params.toString()}`);
+                allAuctions = response.data;
 
-            resultsDiv.innerHTML = filteredAuctions.length
-                ? filteredAuctions.map(renderAuctionItem).join('')
-                : "<p>No auctions found.</p>";
-            statusDiv.textContent = `Found ${filteredAuctions.length} matching auctions (Page ${page + 1}).`;
+                resultsDiv.innerHTML = allAuctions.length
+                    ? allAuctions.map(renderAuctionItem).join('')
+                    : "<p>No auctions found.</p>";
+                statusDiv.textContent = `Found ${allAuctions.length} matching auctions (Page ${page + 1}).`;
 
-            skip = page; // Update skip for pagination buttons
+                skip = page; // Update skip for pagination buttons
+            } catch (error) {
+                statusDiv.textContent = "Search failed. Is the server running?";
+                console.error("Search error:", error);
+            }
         }
 
         function parseAttributeRange(range) {
