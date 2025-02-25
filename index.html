@@ -174,39 +174,34 @@
                 });
                 allAuctions = Array.isArray(response.data) ? response.data : (response.data.auctions || []);
                 if (!allAuctions.length) {
-                    console.warn("No auctions received from backend, attempting initial fetch from Hypixel as fallback...");
-                    await fallbackFetchFromHypixel();
+                    console.warn("No auctions received from backend, checking database...");
+                    await verifyDatabaseConnection();
                 }
 
                 localStorage.setItem('auctionData', JSON.stringify(allAuctions));
                 statusDiv.textContent = `Fetched ${allAuctions.length} auctions successfully.`;
             } catch (error) {
                 console.error("Fetch error from backend:", error);
-                statusDiv.textContent = `Failed to fetch auctions from backend: ${error.message}. Trying Hypixel fallback...`;
-                await fallbackFetchFromHypixel();
+                statusDiv.textContent = `Failed to fetch auctions from backend: ${error.message}. Verifying database...`;
+                await verifyDatabaseConnection();
+                allAuctions = [];
             }
         }
 
-        async function fallbackFetchFromHypixel() {
+        async function verifyDatabaseConnection() {
             try {
-                const initialResponse = await fetch('https://api.hypixel.net/skyblock/auctions');
-                const initialData = await initialResponse.json();
-                if (!initialData.success) throw new Error("Hypixel API failed: " + (initialData.cause || "Unknown error"));
-
-                const totalPages = initialData.totalPages || 1;
-                const pagePromises = Array.from({ length: totalPages }, (_, i) =>
-                    fetch(`https://api.hypixel.net/skyblock/auctions?page=${i}`).then(res => res.json())
-                );
-
-                const allPagesData = await Promise.all(pagePromises);
-                allAuctions = allPagesData.flatMap(data => data.auctions || []);
-
-                localStorage.setItem('auctionData', JSON.stringify(allAuctions));
-                document.getElementById('status').textContent = `Fetched ${allAuctions.length} auctions from Hypixel as fallback.`;
+                // This is a placeholder for actual backend verification (since frontend can't directly connect to MongoDB)
+                console.log("Verifying backend database connection via API call...");
+                const healthCheck = await axios.get("https://sb-auction-api.herokuapp.com/health", {
+                    headers: { 'Accept': 'application/json' }
+                });
+                console.log("Backend health check:", healthCheck.data);
+                if (!healthCheck.data.connected) {
+                    throw new Error("Backend database connection failed");
+                }
             } catch (error) {
-                console.error("Hypixel fallback fetch error:", error);
-                document.getElementById('status').textContent = `Failed to fetch auctions from Hypixel: ${error.message}. Try again later.`;
-                allAuctions = [];
+                console.error("Database verification error:", error);
+                statusDiv.textContent += " Database connection issue detected. Contact admin.";
             }
         }
 
