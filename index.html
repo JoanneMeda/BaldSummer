@@ -104,6 +104,10 @@
             font-style: italic;
             color: #b0bec5;
         }
+        .error {
+            color: #ff5555; /* Red for errors */
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -148,7 +152,7 @@
 
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <script>
-        const apiEndpoint = "https://sb-auction-api.herokuapp.com/auctions/search"; // Updated to Heroku backend
+        const apiEndpoint = "https://sb-auction-api.herokuapp.com/auctions/search"; // Query cached data from backend
         let allAuctions = [];
         let skip = 0; // Track pagination
 
@@ -177,6 +181,8 @@
         }
 
         async function searchItem(page = 0) {
+            if (!allAuctions.length) await fetchAuctionData();
+
             const query = document.getElementById('searchInput').value.trim().toLowerCase();
             const rarity = document.getElementById('rarityFilter').value;
             const binFilter = document.getElementById('binFilter').value;
@@ -192,30 +198,26 @@
 
             console.log('Searching with params:', { query, rarity, binFilter, attribute1, attribute2, attributeRange, priceSort, page });
 
-            const params = new URLSearchParams();
-            if (query) params.append('item', query);
-            if (rarity) params.append('rarity', rarity);
-            if (binFilter) params.append('bin', binFilter);
-            if (attribute1) params.append('attribute1', attribute1);
-            if (attribute2) params.append('attribute2', attribute2);
-            if (attributeRange) params.append('attributeRange', attributeRange);
-            if (priceSort) params.append('priceSort', priceSort);
-            params.append('skip', page * 100);
+            const [attributeName, rangeStart, rangeEnd] = parseAttributeRange(attributeRange);
 
-            try {
-                const response = await axios.get(`${apiEndpoint}?${params.toString()}`);
-                allAuctions = response.data;
+            const filteredAuctions = allAuctions.filter(auction => {
+                return (
+                    (!query || (auction.item_name && auction.item_name.toLowerCase().includes(query))) &&
+                    (!rarity || (auction.tier && auction.tier === rarity)) &&
+                    (binFilter === "" || (auction.bin === (binFilter === "true"))) &&
+                    (!attribute1 || (auction.item_lore?.toLowerCase().includes(attribute1))) &&
+                    (!attribute2 || (auction.item_lore?.toLowerCase().includes(attribute2))) &&
+                    (!attributeName || checkAttributeRange(auction.item_lore, attributeName, rangeStart, rangeEnd))
+                );
+            }).sort((a, b) => priceSort === "highest" ? (b.starting_bid || 0) - (a.starting_bid || 0) : (a.starting_bid || 0) - (b.starting_bid || 0))
+              .slice(page * 100, (page + 1) * 100);
 
-                resultsDiv.innerHTML = allAuctions.length
-                    ? allAuctions.map(renderAuctionItem).join('')
-                    : "<p>No auctions found.</p>";
-                statusDiv.textContent = `Found ${allAuctions.length} matching auctions (Page ${page + 1}).`;
+            resultsDiv.innerHTML = filteredAuctions.length
+                ? filteredAuctions.map(renderAuctionItem).join('')
+                : "<p>No auctions found.</p>";
+            statusDiv.textContent = `Found ${filteredAuctions.length} matching auctions (Page ${page + 1}).`;
 
-                skip = page; // Update skip for pagination buttons
-            } catch (error) {
-                statusDiv.textContent = "Search failed. Is the server running?";
-                console.error("Search error:", error);
-            }
+            skip = page; // Update skip for pagination buttons
         }
 
         function parseAttributeRange(range) {
@@ -234,15 +236,15 @@
             const loreLines = auction.item_lore?.split('\n').map(line => `<p>${applyMinecraftFormatting(line)}</p>`).join('') || '<p>No details.</p>';
             return `
                 <div class="item">
-                    <h2 style="${getRarityColor(auction.tier)}">${highlightSpecialCharacters(applyMinecraftFormatting(auction.item_name))}</h2>
+                    <h2 style="${getRarityColor(auction.tier)}">${highlightSpecialCharacters(applyMinecraftFormatting(auction.item_name || 'Unknown'))}</h2>
                     ${loreLines}
-                    <p><strong>Price:</strong> <span style="color: #ffd700;">${auction.starting_bid.toLocaleString()} Coins</span></p>
+                    <p><strong>Price:</strong> <span style="color: #ffd700;">${(auction.starting_bid || 0).toLocaleString()} Coins</span></p>
                     <p><strong>Auction:</strong> 
-                        <a href="#" onclick="event.preventDefault(); navigator.clipboard.writeText('/viewauction ${auction.uuid}');">
-                            /viewauction ${auction.uuid}
+                        <a href="#" onclick="event.preventDefault(); navigator.clipboard.writeText('/viewauction ${auction.uuid || 'N/A'}');">
+                            /viewauction ${auction.uuid || 'N/A'}
                         </a>
                     </p>
-                    <p><strong>Ends:</strong> ${new Date(auction.end).toLocaleString()}</p>
+                    <p><strong>Ends:</strong> ${auction.end ? new Date(auction.end).toLocaleString() : 'N/A'}</p>
                 </div>
             `;
         }
