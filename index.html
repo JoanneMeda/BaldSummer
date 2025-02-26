@@ -142,9 +142,9 @@
             </select>
             <button onclick="searchItem()">Search</button>
             <button onclick="fetchAuctionData(true)">Refetch Auctions</button>
-            <button onclick="searchItem(0)">First Page</button>
-            <button onclick="searchItem(skip - 1)" ${skip <= 0 ? 'disabled' : ''}>Previous</button>
-            <button onclick="searchItem(skip + 1)">Next</button>
+            <button id="firstPageBtn" onclick="searchItem(0)">First Page</button>
+            <button id="prevPageBtn" onclick="searchItem(skip <= 0 ? 0 : skip - 1)">Previous</button>
+            <button id="nextPageBtn" onclick="searchItem(skip + 1)">Next</button>
         </div>
         <div class="results" id="results"></div>
         <div class="status" id="status"></div>
@@ -163,6 +163,7 @@
             if (!forceRefresh && localStorage.getItem('auctionData')) {
                 allAuctions = JSON.parse(localStorage.getItem('auctionData')) || [];
                 statusDiv.textContent = "Using cached data. Click 'Refetch Auctions' to update.";
+                updatePaginationButtons();
                 return;
             }
 
@@ -180,17 +181,18 @@
 
                 localStorage.setItem('auctionData', JSON.stringify(allAuctions));
                 statusDiv.textContent = `Fetched ${allAuctions.length} auctions successfully.`;
+                updatePaginationButtons();
             } catch (error) {
                 console.error("Fetch error from backend:", error);
                 statusDiv.textContent = `Failed to fetch auctions from backend: ${error.message}. Verifying database...`;
                 await verifyDatabaseConnection();
                 allAuctions = [];
+                updatePaginationButtons();
             }
         }
 
         async function verifyDatabaseConnection() {
             try {
-                // This is a placeholder for actual backend verification (since frontend can't directly connect to MongoDB)
                 console.log("Verifying backend database connection via API call...");
                 const healthCheck = await axios.get("https://sb-auction-api.herokuapp.com/health", {
                     headers: { 'Accept': 'application/json' }
@@ -201,11 +203,13 @@
                 }
             } catch (error) {
                 console.error("Database verification error:", error);
+                const statusDiv = document.getElementById('status');
                 statusDiv.textContent += " Database connection issue detected. Contact admin.";
             }
         }
 
         async function searchItem(page = 0) {
+            skip = Math.max(0, page); // Ensure skip is not negative
             if (!allAuctions.length) await fetchAuctionData();
 
             const query = document.getElementById('searchInput').value.trim().toLowerCase();
@@ -235,14 +239,24 @@
                     (!attributeName || checkAttributeRange(auction.item_lore, attributeName, rangeStart, rangeEnd))
                 );
             }).sort((a, b) => priceSort === "highest" ? (b.starting_bid || 0) - (a.starting_bid || 0) : (a.starting_bid || 0) - (b.starting_bid || 0))
-              .slice(page * 100, (page + 1) * 100);
+              .slice(skip * 100, (skip + 1) * 100);
 
             resultsDiv.innerHTML = filteredAuctions.length
                 ? filteredAuctions.map(renderAuctionItem).join('')
                 : "<p>No auctions found.</p>";
-            statusDiv.textContent = `Found ${filteredAuctions.length} matching auctions (Page ${page + 1}).`;
+            statusDiv.textContent = `Found ${filteredAuctions.length} matching auctions (Page ${skip + 1}).`;
 
-            skip = page; // Update skip for pagination buttons
+            updatePaginationButtons();
+        }
+
+        function updatePaginationButtons() {
+            const firstPageBtn = document.getElementById('firstPageBtn');
+            const prevPageBtn = document.getElementById('prevPageBtn');
+            const nextPageBtn = document.getElementById('nextPageBtn');
+
+            firstPageBtn.disabled = skip === 0;
+            prevPageBtn.disabled = skip <= 0;
+            nextPageBtn.disabled = allAuctions.filter(auction => auction).length <= (skip + 1) * 100; // Disable if no more auctions
         }
 
         function parseAttributeRange(range) {
