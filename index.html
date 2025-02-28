@@ -5,16 +5,100 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hypixel SkyBlock Auction Tracker</title>
     <style>
-        /* Keep your existing CSS styles (unchanged for brevity) */
         body {
             font-family: 'Arial', sans-serif;
             margin: 0;
             padding: 0;
-            background-color: #0a0e1a;
-            color: #e0e7ff;
+            background-color: #0a0e1a; /* Dark navy, Grok-inspired */
+            color: #e0e7ff; /* Light bluish-white */
             line-height: 1.6;
         }
-        /* ... (Rest of your CSS remains the same) */
+        header {
+            background-color: #1e2a44; /* Darker blue-purple */
+            color: #ffffff;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+        header h1 {
+            margin: 0;
+            font-size: 2rem;
+        }
+        main {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        .search-bar {
+            background: #1e2a44;
+            padding: 1rem;
+            border-radius: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        .search-bar input, .search-bar select {
+            padding: 0.5rem;
+            border: 1px solid #3b4a6b;
+            border-radius: 4px;
+            background-color: #2c3551;
+            color: #e0e7ff;
+            font-size: 1rem;
+            flex: 1 1 200px; /* Flexible width */
+            max-width: 300px;
+        }
+        .search-bar button {
+            padding: 0.5rem 1rem;
+            background-color: #5c6bc0; /* Grok purple-blue */
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .search-bar button:hover {
+            background-color: #3f51b5; /* Darker hover */
+        }
+        .results {
+            margin-top: 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+        .item {
+            background-color: #1e2a44;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s;
+        }
+        .item:hover {
+            transform: translateY(-5px); /* Subtle lift on hover */
+        }
+        .item h2 {
+            margin: 0 0 0.5rem;
+            font-size: 1.25rem;
+            color: #c5cae9; /* Light purple-gray */
+        }
+        .item p {
+            margin: 0.3rem 0;
+            font-size: 0.9rem;
+        }
+        .item a {
+            color: #81d4fa; /* Light blue for links */
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .item a:hover {
+            text-decoration: underline;
+        }
+        .status {
+            margin-top: 1rem;
+            text-align: center;
+            font-style: italic;
+            color: #b0bec5;
+        }
     </style>
 </head>
 <body>
@@ -49,76 +133,64 @@
             </select>
             <button onclick="searchItem()">Search</button>
             <button onclick="fetchAuctionData(true)">Refetch Auctions</button>
-            <button id="firstPageBtn" onclick="searchItem(0)">First Page</button>
-            <button id="prevPageBtn" onclick="searchItem(skip <= 0 ? 0 : skip - 1)">Previous</button>
-            <button id="nextPageBtn" onclick="searchItem(skip + 1)">Next</button>
         </div>
         <div class="results" id="results"></div>
         <div class="status" id="status"></div>
     </main>
 
-    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <script>
-        // Update this to your Heroku app URL after deployment
-        const apiEndpoint = "https://sb-auction-api-joanne.herokuapp.com/auctions/search";
+        // Use the public Hypixel API endpoint (no API key for public access)
+        const apiEndpoint = "https://api.hypixel.net/skyblock/auctions";
         let allAuctions = [];
-        let skip = 0; // Track pagination
+        let lastUpdate = 0; // Track the last update timestamp
+        const UPDATE_INTERVAL = 5 * 60 * 1000; // Update every 5 minutes (300,000 ms)
 
+        // Function to fetch auctions and store them (hidden in memory and localStorage)
         async function fetchAuctionData(forceRefresh = false) {
             const resultsDiv = document.getElementById('results');
             const statusDiv = document.getElementById('status');
+            const now = Date.now();
 
-            if (!forceRefresh && localStorage.getItem('auctionData')) {
+            // Check if we need to refresh (forceRefresh or data is older than 5 minutes)
+            if (!forceRefresh && localStorage.getItem('auctionData') && (now - lastUpdate < UPDATE_INTERVAL)) {
                 allAuctions = JSON.parse(localStorage.getItem('auctionData')) || [];
                 statusDiv.textContent = "Using cached data. Click 'Refetch Auctions' to update.";
-                updatePaginationButtons();
                 return;
             }
 
             statusDiv.textContent = "Fetching auction data...";
             resultsDiv.innerHTML = "";
             try {
-                const response = await axios.get(apiEndpoint, {
-                    headers: { 'Accept': 'application/json' }
-                });
-                console.log('Backend response:', response.data); // Debug the response
-                allAuctions = Array.isArray(response.data) ? response.data : (response.data.auctions || []);
-                if (!allAuctions.length) {
-                    console.warn("No auctions received from backend, checking database...");
-                    await verifyDatabaseConnection();
-                }
+                const initialResponse = await fetch(apiEndpoint);
+                const initialData = await initialResponse.json();
+                if (!initialData.success) throw new Error("API request failed: " + (initialData.cause || "Unknown error"));
 
+                const totalPages = initialData.totalPages || 1;
+                const pagePromises = Array.from({ length: totalPages }, (_, i) =>
+                    fetch(`${apiEndpoint}?page=${i}`).then(res => res.json())
+                );
+
+                const allPagesData = await Promise.all(pagePromises);
+                allAuctions = allPagesData.flatMap(data => data.auctions || []).filter(auction => auction); // Filter out null/undefined auctions
+
+                // Save to localStorage (hidden from UI, only used internally)
                 localStorage.setItem('auctionData', JSON.stringify(allAuctions));
+                lastUpdate = now; // Update timestamp
                 statusDiv.textContent = `Fetched ${allAuctions.length} auctions successfully.`;
-                updatePaginationButtons();
             } catch (error) {
-                console.error("Fetch error from backend:", error);
-                statusDiv.textContent = `Failed to fetch auctions from backend: ${error.message}. Verifying database...`;
-                await verifyDatabaseConnection();
-                allAuctions = [];
-                updatePaginationButtons();
+                console.error("Fetch error:", error);
+                statusDiv.textContent = "Failed to fetch auctions. Try again later.";
+                allAuctions = JSON.parse(localStorage.getItem('auctionData')) || []; // Fallback to cached data
             }
+
+            // Schedule the next update (hidden, runs in background)
+            setTimeout(fetchAuctionData, UPDATE_INTERVAL);
         }
 
-        async function verifyDatabaseConnection() {
-            try {
-                console.log("Verifying backend database connection via API call...");
-                const healthCheck = await axios.get("https://your-heroku-app.herokuapp.com/health", {
-                    headers: { 'Accept': 'application/json' }
-                });
-                console.log("Backend health check:", healthCheck.data);
-                if (!healthCheck.data.connected) {
-                    throw new Error("Backend database connection failed");
-                }
-            } catch (error) {
-                console.error("Database verification error:", error);
-                const statusDiv = document.getElementById('status');
-                statusDiv.textContent += " Database connection issue detected. Contact admin.";
-            }
-        }
+        // Initial fetch on page load
+        fetchAuctionData();
 
-        async function searchItem(page = 0) {
-            skip = Math.max(0, page); // Ensure skip is not negative
+        async function searchItem() {
             if (!allAuctions.length) await fetchAuctionData();
 
             const query = document.getElementById('searchInput').value.trim().toLowerCase();
@@ -134,38 +206,24 @@
             statusDiv.textContent = "Searching...";
             resultsDiv.innerHTML = "";
 
-            console.log('Searching with params:', { query, rarity, binFilter, attribute1, attribute2, attributeRange, priceSort, page });
-
             const [attributeName, rangeStart, rangeEnd] = parseAttributeRange(attributeRange);
 
             const filteredAuctions = allAuctions.filter(auction => {
                 return (
-                    (!query || (auction.item_name && auction.item_name.toLowerCase().includes(query))) &&
-                    (!rarity || (auction.tier && auction.tier === rarity)) &&
-                    (binFilter === "" || (auction.bin === (binFilter === "true"))) &&
+                    (!query || auction.item_name.toLowerCase().includes(query)) &&
+                    (!rarity || auction.tier === rarity) &&
+                    (binFilter === "" || auction.bin === (binFilter === "true")) &&
                     (!attribute1 || (auction.item_lore?.toLowerCase().includes(attribute1))) &&
                     (!attribute2 || (auction.item_lore?.toLowerCase().includes(attribute2))) &&
                     (!attributeName || checkAttributeRange(auction.item_lore, attributeName, rangeStart, rangeEnd))
                 );
-            }).sort((a, b) => priceSort === "highest" ? (b.starting_bid || 0) - (a.starting_bid || 0) : (a.starting_bid || 0) - (b.starting_bid || 0))
-              .slice(skip * 100, (skip + 1) * 100);
+            }).sort((a, b) => priceSort === "highest" ? b.starting_bid - a.starting_bid : a.starting_bid - b.starting_bid)
+              .slice(0, 100);
 
             resultsDiv.innerHTML = filteredAuctions.length
                 ? filteredAuctions.map(renderAuctionItem).join('')
                 : "<p>No auctions found.</p>";
-            statusDiv.textContent = `Found ${filteredAuctions.length} matching auctions (Page ${skip + 1}).`;
-
-            updatePaginationButtons();
-        }
-
-        function updatePaginationButtons() {
-            const firstPageBtn = document.getElementById('firstPageBtn');
-            const prevPageBtn = document.getElementById('prevPageBtn');
-            const nextPageBtn = document.getElementById('nextPageBtn');
-
-            firstPageBtn.disabled = skip === 0;
-            prevPageBtn.disabled = skip <= 0;
-            nextPageBtn.disabled = allAuctions.filter(auction => auction).length <= (skip + 1) * 100; // Disable if no more auctions
+            statusDiv.textContent = `Found ${filteredAuctions.length} matching auctions.`;
         }
 
         function parseAttributeRange(range) {
@@ -184,15 +242,15 @@
             const loreLines = auction.item_lore?.split('\n').map(line => `<p>${applyMinecraftFormatting(line)}</p>`).join('') || '<p>No details.</p>';
             return `
                 <div class="item">
-                    <h2 style="${getRarityColor(auction.tier)}">${highlightSpecialCharacters(applyMinecraftFormatting(auction.item_name || 'Unknown'))}</h2>
+                    <h2 style="${getRarityColor(auction.tier)}">${highlightSpecialCharacters(applyMinecraftFormatting(auction.item_name))}</h2>
                     ${loreLines}
-                    <p><strong>Price:</strong> <span style="color: #ffd700;">${(auction.starting_bid || 0).toLocaleString()} Coins</span></p>
+                    <p><strong>Price:</strong> <span style="color: #ffd700;">${auction.starting_bid.toLocaleString()} Coins</span></p>
                     <p><strong>Auction:</strong> 
-                        <a href="#" onclick="event.preventDefault(); navigator.clipboard.writeText('/viewauction ${auction.uuid || 'N/A'}');">
-                            /viewauction ${auction.uuid || 'N/A'}
+                        <a href="#" onclick="event.preventDefault(); navigator.clipboard.writeText('/viewauction ${auction.uuid}');">
+                            /viewauction ${auction.uuid}
                         </a>
                     </p>
-                    <p><strong>Ends:</strong> ${auction.end ? new Date(auction.end).toLocaleString() : 'N/A'}</p>
+                    <p><strong>Ends:</strong> ${new Date(auction.end).toLocaleString()}</p>
                 </div>
             `;
         }
@@ -234,9 +292,6 @@
             return text.replace(/§[0-9a-fklmnor]/g, match => colorMap[match] ? `<span style="${colorMap[match]}">` : '')
                        .replace(/§r/g, '</span>') + Array(text.split('§').length - 1).fill('</span>').join('');
         }
-
-        // Initial fetch on page load
-        fetchAuctionData();
     </script>
 </body>
 </html>
