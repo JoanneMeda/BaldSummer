@@ -139,24 +139,17 @@
     </main>
 
     <script>
-        // Use the public Hypixel API endpoint (no API key for public access)
         const apiEndpoint = "https://api.hypixel.net/skyblock/auctions";
-        let allAuctions = [];
-        let lastUpdate = 0; // Track the last update timestamp
+        let allAuctions = []; // Store all fetched auctions
+        let displayedAuctions = []; // Store only 1/4 of auctions for display
         const UPDATE_INTERVAL = 5 * 60 * 1000; // Update every 5 minutes (300,000 ms)
+        const PORTION_SIZE = 4; // Display 1/4 of total auctions (adjust to 3 for 1/3)
 
-        // Function to fetch auctions and store them (hidden in memory and localStorage)
+        // Function to fetch all auctions, exclude duplicates, remove expired, and display 1/4
         async function fetchAuctionData(forceRefresh = false) {
             const resultsDiv = document.getElementById('results');
             const statusDiv = document.getElementById('status');
             const now = Date.now();
-
-            // Check if we need to refresh (forceRefresh or data is older than 5 minutes)
-            if (!forceRefresh && localStorage.getItem('auctionData') && (now - lastUpdate < UPDATE_INTERVAL)) {
-                allAuctions = JSON.parse(localStorage.getItem('auctionData')) || [];
-                statusDiv.textContent = "Using cached data. Click 'Refetch Auctions' to update.";
-                return;
-            }
 
             statusDiv.textContent = "Fetching auction data...";
             resultsDiv.innerHTML = "";
@@ -166,33 +159,58 @@
                 if (!initialData.success) throw new Error("API request failed: " + (initialData.cause || "Unknown error"));
 
                 const totalPages = initialData.totalPages || 1;
+                console.log('Total pages to fetch:', totalPages);
+
                 const pagePromises = Array.from({ length: totalPages }, (_, i) =>
                     fetch(`${apiEndpoint}?page=${i}`).then(res => res.json())
                 );
 
                 const allPagesData = await Promise.all(pagePromises);
-                allAuctions = allPagesData.flatMap(data => data.auctions || []).filter(auction => auction); // Filter out null/undefined auctions
+                const fetchedAuctions = allPagesData.flatMap(data => data.auctions || []).filter(auction => auction && auction.item_name);
 
-                // Save to localStorage (hidden from UI, only used internally)
-                localStorage.setItem('auctionData', JSON.stringify(allAuctions));
-                lastUpdate = now; // Update timestamp
-                statusDiv.textContent = `Fetched ${allAuctions.length} auctions successfully.`;
+                // Exclude duplicates based on uuid
+                const uniqueAuctions = fetchedAuctions.filter(newAuction => 
+                    !allAuctions.some(existing => existing.uuid === newAuction.uuid)
+                );
+
+                // Remove expired auctions (end time in milliseconds < current time)
+                allAuctions = allAuctions
+                    .filter(auction => auction.end > now)
+                    .concat(uniqueAuctions);
+
+                // Sort all auctions by end time (newest first) and limit displayed to 1/4
+                allAuctions.sort((a, b) => b.end - a.end);
+                const totalAuctions = allAuctions.length;
+                const maxDisplayed = Math.ceil(totalAuctions / PORTION_SIZE);
+                displayedAuctions = allAuctions.slice(0, maxDisplayed);
+
+                statusDiv.textContent = `Fetched ${allAuctions.length} total auctions, displaying ${displayedAuctions.length}.`;
+                updateDisplay(); // Show the current 1/4 of auctions
+                scheduleNextUpdate(); // Schedule the next fetch
             } catch (error) {
                 console.error("Fetch error:", error);
-                statusDiv.textContent = "Failed to fetch auctions. Try again later.";
-                allAuctions = JSON.parse(localStorage.getItem('auctionData')) || []; // Fallback to cached data
+                statusDiv.textContent = "Failed to fetch auctions. Retrying in 5 minutes.";
+                scheduleNextUpdate(); // Try again later
             }
+        }
 
-            // Schedule the next update (hidden, runs in background)
+        // Schedule the next update (hidden, runs in background)
+        function scheduleNextUpdate() {
             setTimeout(fetchAuctionData, UPDATE_INTERVAL);
+        }
+
+        // Update the display with current 1/4 of auctions
+        function updateDisplay() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = displayedAuctions.length
+                ? displayedAuctions.map(renderAuctionItem).join('')
+                : "<p>No auctions found.</p>";
         }
 
         // Initial fetch on page load
         fetchAuctionData();
 
         async function searchItem() {
-            if (!allAuctions.length) await fetchAuctionData();
-
             const query = document.getElementById('searchInput').value.trim().toLowerCase();
             const rarity = document.getElementById('rarityFilter').value;
             const binFilter = document.getElementById('binFilter').value;
@@ -206,10 +224,12 @@
             statusDiv.textContent = "Searching...";
             resultsDiv.innerHTML = "";
 
+            console.log('Search params:', { query, rarity, binFilter, attribute1, attribute2, attributeRange, priceSort });
+
             const [attributeName, rangeStart, rangeEnd] = parseAttributeRange(attributeRange);
 
             const filteredAuctions = allAuctions.filter(auction => {
-                return (
+                const matches = (
                     (!query || auction.item_name.toLowerCase().includes(query)) &&
                     (!rarity || auction.tier === rarity) &&
                     (binFilter === "" || auction.bin === (binFilter === "true")) &&
@@ -217,8 +237,12 @@
                     (!attribute2 || (auction.item_lore?.toLowerCase().includes(attribute2))) &&
                     (!attributeName || checkAttributeRange(auction.item_lore, attributeName, rangeStart, rangeEnd))
                 );
+                if (!matches) console.log('Auction not matching:', auction.item_name, auction);
+                return matches;
             }).sort((a, b) => priceSort === "highest" ? b.starting_bid - a.starting_bid : a.starting_bid - b.starting_bid)
               .slice(0, 100);
+
+            console.log('Filtered auctions:', filteredAuctions.length);
 
             resultsDiv.innerHTML = filteredAuctions.length
                 ? filteredAuctions.map(renderAuctionItem).join('')
